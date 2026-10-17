@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kornweihe, Wiesenweihe oder Steppenweihe?</title>
+  <style>
+    :root { color-scheme: light; --ink:#203128; --green:#315b43; --pale:#edf3ed; --gold:#e8c66a; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh; padding: 24px;
+      font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+      color: var(--ink); background: linear-gradient(145deg, #f6f7f1, #e4ede4);
+      display: grid; place-items: center;
+    }
+    main { width: min(760px, 100%); text-align: center; }
+    h1 { margin: 0 0 8px; font-size: clamp(1.8rem, 5vw, 2.7rem); }
+    .intro { margin: 0 0 22px; color: #526257; }
+    .stats { display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+    .stat { background: white; border: 1px solid #d7e1d6; border-radius: 14px; padding: 10px 16px; min-width: 125px; }
+    .stat strong { display: block; font-size: 1.35rem; }
+    .panel { background: white; border: 1px solid #d7e1d6; border-radius: 20px; padding: clamp(14px, 3vw, 24px); box-shadow: 0 12px 32px #20312812; }
+    .image-wrap { min-height: 240px; display: grid; place-items: center; background: #f0f3ef; border-radius: 14px; overflow: hidden; }
+    img { display: block; width: 100%; height: min(58vh, 470px); object-fit: contain; }
+    .buttons { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-top: 18px; }
+    button { font: inherit; font-weight: 650; border: 0; border-radius: 12px; padding: 13px 20px; cursor: pointer; transition: transform .12s, opacity .12s; }
+    button:hover:not(:disabled) { transform: translateY(-1px); }
+    button:disabled { cursor: default; opacity: .55; }
+    .choice { flex: 1 1 150px; max-width: 220px; color: white; background: var(--green); }
+    .secondary { background: #e8eee8; color: var(--ink); }
+    #feedback { min-height: 30px; margin: 16px 0 0; font-weight: 750; font-size: 1.15rem; }
+    #detail { margin: 4px 0 0; color: #526257; }
+    .notice { margin-top: 16px; color: #59675d; font-size: .9rem; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Kornweihe, Wiesenweihe oder Steppenweihe?</h1>
+  <p class="intro">Schau dir das Bild genau an und bestimme die Weihenart.</p>
+
+  <section class="stats" aria-label="Spielstand">
+    <div class="stat">Runde<strong id="round">0 / 30</strong></div>
+    <div class="stat">Richtig<strong id="score">0</strong></div>
+    <div class="stat">Trefferquote<strong id="accuracy">–</strong></div>
+  </section>
+
+  <section class="panel">
+    <div class="image-wrap">
+      <img id="bird" alt="Zu bestimmender Greifvogel">
+      <p id="imageError" hidden>Das Bild konnte nicht geladen werden. Bitte prüfe, ob die Ordner und Dateinamen stimmen.</p>
+    </div>
+    <div class="buttons" id="choices">
+      <button class="choice" data-answer="kw">Kornweihe</button>
+      <button class="choice" data-answer="ww">Wiesenweihe</button>
+      <button class="choice" data-answer="sw">Steppenweihe</button>
+    </div>
+    <p id="feedback" role="status" aria-live="polite"></p>
+    <p id="detail"></p>
+    <div class="buttons">
+      <button class="secondary" id="next" hidden>Nächstes Bild →</button>
+      <button class="secondary" id="restart" hidden>Nochmal spielen</button>
+    </div>
+  </section>
+  <p class="notice">In jeder Spielrunde werden zufällig 30 Bilder aus allen verfügbaren Ordnern ausgewählt.</p>
+</main>
+
+<script>
+(() => {
+  // Hier trägst du exakt die Anzahl der Bilder ein, die in den jeweiligen Ordnern liegen:
+  const limits = {
+    kw: 59,
+    ww: 50,
+    sw: 50
+  };
+  
+  // Gewünschte Anzahl an Fragen pro Spieldurchlauf:
+  const TOTAL = 15;
+
+  const allImages = [];
+  
+  // Bilder für jeden Ordner automatisch bis zur jeweiligen Obergrenze generieren
+  for (const [folder, count] of Object.entries(limits)) {
+    for (let i = 1; i <= count; i++) {
+      const n = String(i).padStart(4, "0");
+      allImages.push({ src: `${folder}/${folder}_${n}.jpg`, answer: folder });
+    }
+  }
+
+  const bird = document.getElementById("bird");
+  const imageError = document.getElementById("imageError");
+  const roundEl = document.getElementById("round");
+  const scoreEl = document.getElementById("score");
+  const accuracyEl = document.getElementById("accuracy");
+  const feedback = document.getElementById("feedback");
+  const detail = document.getElementById("detail");
+  const choices = [...document.querySelectorAll(".choice")];
+  const nextButton = document.getElementById("next");
+  const restartButton = document.getElementById("restart");
+
+  let deck = [];
+  let index = 0;
+  let score = 0;
+  let answered = false;
+
+  function shuffle(items) {
+    const result = [...items];
+    for (let i = result.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [result[i], result[j]] = [result[j], result[i]];
+    }
+    return result;
+  }
+
+  function updateStats() {
+    roundEl.textContent = `${Math.min(index + 1, TOTAL)} / ${TOTAL}`;
+    scoreEl.textContent = score;
+    const answeredCount = index + (answered ? 1 : 0);
+    accuracyEl.textContent = answeredCount ? `${Math.round(score / answeredCount * 100)} %` : "–";
+  }
+
+  function showImage() {
+    answered = false;
+    feedback.textContent = "";
+    detail.textContent = "";
+    imageError.hidden = true;
+    bird.hidden = false;
+    bird.alt = "Zu bestimmender Greifvogel";
+    bird.src = deck[index].src;
+    choices.forEach(button => button.disabled = false);
+    nextButton.hidden = true;
+    restartButton.hidden = true;
+    document.getElementById("choices").hidden = false;
+    updateStats();
+  }
+
+  function choose(choice) {
+    if (answered) return;
+    answered = true;
+    const correct = deck[index].answer;
+    const isCorrect = choice === correct;
+    if (isCorrect) score++;
+
+    feedback.textContent = isCorrect ? "Richtig! ✓" : "Leider falsch. ✗";
+    feedback.style.color = isCorrect ? "#237344" : "#b33a32";
+    
+    let correctName = "eine Kornweihe";
+    if (correct === "ww") correctName = "eine Wiesenweihe";
+    if (correct === "sw") correctName = "eine Steppenweihe";
+
+    detail.textContent = `Das ist ${correctName}.`;
+    choices.forEach(button => button.disabled = true);
+    nextButton.hidden = false;
+    nextButton.textContent = index === TOTAL - 1 ? "Ergebnis anzeigen →" : "Nächstes Bild →";
+    updateStats();
+  }
+
+  function next() {
+    if (!answered) return;
+    index++;
+    if (index >= TOTAL) {
+      bird.hidden = true;
+      imageError.hidden = true;
+      document.getElementById("choices").hidden = true;
+      feedback.style.color = "#203128";
+      feedback.textContent = "Spiel beendet!";
+      detail.textContent = `Du hast ${score} von ${TOTAL} Bildern richtig erkannt (${Math.round(score / TOTAL * 100)} %).`;
+      nextButton.hidden = true;
+      restartButton.hidden = false;
+      roundEl.textContent = `${TOTAL} / ${TOTAL}`;
+      scoreEl.textContent = score;
+      accuracyEl.textContent = `${Math.round(score / TOTAL * 100)} %`;
+    } else {
+      showImage();
+    }
+  }
+
+  function restart() {
+    deck = shuffle(allImages).slice(0, TOTAL);
+    index = 0;
+    score = 0;
+    showImage();
+  }
+
+  choices.forEach(button => button.addEventListener("click", () => choose(button.dataset.answer)));
+  nextButton.addEventListener("click", next);
+  restartButton.addEventListener("click", restart);
+  bird.addEventListener("error", () => {
+    bird.hidden = true;
+    imageError.hidden = false;
+  });
+
+  restart();
+})();
+</script>
+</body>
+</html>
